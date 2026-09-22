@@ -1,0 +1,119 @@
+# Full rule set for jslogic.
+#
+# Adds a catch-all regex discovery rule on top of the focused set. This
+# is intentionally noisy: the goal is to enumerate every regex literal
+# and regex API call in the codebase so a human can systematically review
+# them for ReDoS, logic flaws, and validation bypasses.
+#
+# Use this when:
+#   * the target has an unusual amount of custom regex-based validation,
+#   * you are auditing a JS library or SDK where regex surface is the
+#     primary concern,
+#   * you want a complete inventory rather than targeted findings.
+#
+# Do not use this by default — a large bundle produces thousands of
+# regex hits, the vast majority of which are benign.
+rules:
+  # -----------------------------------------------------------------------
+  # Focused rules (same as routing-logic.yaml)
+  # -----------------------------------------------------------------------
+  - id: jslogic-validation-logic
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      [Validation] A routing-shaped variable is used in a check.
+      Manually review for normalization bypass, case-sensitivity bugs,
+      or regex flaws that could be leveraged for SSRF / open redirect.
+    patterns:
+      - pattern-either:
+          - pattern: $VAR.includes(...)
+          - pattern: $VAR.startsWith(...)
+          - pattern: $VAR.endsWith(...)
+          - pattern: $VAR.indexOf(...)
+          - pattern: $VAR.match(...)
+          - pattern: $VAR.search(...)
+          - pattern: $REGEX.test($VAR)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(url|uri|endpoint|path|href|domain|hostname|host|redirect|target|dest|destination|next|return|file|page|src|link|route|query|param|api|input|callback|site).*
+
+  - id: jslogic-dom-routing-sink
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      [Routing Sink] A user-shaped variable reaches a navigation API.
+      Classic DOM-based XSS (`javascript:`) and open-redirect (`//evil.tld`)
+      primitive. Trace the source and check every upstream validation.
+    patterns:
+      - pattern-either:
+          - pattern: window.location = $VAR
+          - pattern: window.location.href = $VAR
+          - pattern: window.location.assign($VAR)
+          - pattern: window.location.replace($VAR)
+          - pattern: location = $VAR
+          - pattern: location.href = $VAR
+          - pattern: location.assign($VAR)
+          - pattern: location.replace($VAR)
+          - pattern: window.open($VAR, ...)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(url|uri|endpoint|path|href|domain|hostname|host|redirect|target|dest|destination|next|return|file|page|src|link|route|query|param|api|input|callback|site).*
+
+  - id: jslogic-network-request-sink
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      [Network Sink] A user-shaped variable is used as an HTTP request
+      destination. Client-side SSRF and path traversal primitive. Check
+      whether the value is constrained to a fixed origin before use.
+    patterns:
+      - pattern-either:
+          - pattern: fetch($VAR, ...)
+          - pattern: window.fetch($VAR, ...)
+          - pattern: axios($VAR, ...)
+          - pattern: axios.get($VAR, ...)
+          - pattern: axios.post($VAR, ...)
+          - pattern: axios.put($VAR, ...)
+          - pattern: axios.delete($VAR, ...)
+          - pattern: $.ajax($VAR, ...)
+          - pattern: $.get($VAR, ...)
+          - pattern: $.post($VAR, ...)
+          - pattern: |
+              $XHR = new XMLHttpRequest();
+              ...
+              $XHR.open(..., $VAR, ...);
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(url|uri|endpoint|path|href|domain|hostname|host|redirect|target|dest|destination|next|return|file|page|src|link|route|query|param|api|input|callback|site).*
+
+  # -----------------------------------------------------------------------
+  # Catch-all regex discovery
+  # -----------------------------------------------------------------------
+  - id: jslogic-regex-literal
+    languages: [javascript, typescript]
+    severity: INFO
+    message: >-
+      [Regex] A regex literal is defined here. Review manually for ReDoS
+      (nested quantifiers, catastrophic backtracking) and for whether the
+      pattern can be bypassed by an attacker-controlled input.
+    patterns:
+      - pattern: /.../
+
+  - id: jslogic-regex-usage
+    languages: [javascript, typescript]
+    severity: INFO
+    message: >-
+      [Regex] A regex API is called. Review the pattern argument and the
+      input source. Regex-based validation is a frequent source of
+      bypasses when it does not anchor, does not normalize, or is
+      applied to a decoded-but-not-re-encoded value.
+    patterns:
+      - pattern-either:
+          - pattern: new RegExp(...)
+          - pattern: $REGEX.test(...)
+          - pattern: $REGEX.exec(...)
+          - pattern: $STR.match(...)
+          - pattern: $STR.matchAll(...)
+          - pattern: $STR.search(...)
+          - pattern: $STR.replace($REGEX, ...)
+          - pattern: $STR.replaceAll($REGEX, ...)
