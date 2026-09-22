@@ -1,0 +1,98 @@
+# Focused rule set for jslogic.
+#
+# These rules target the three categories that most often lead to real
+# client-side security findings during manual review:
+#
+#   1. Validation logic — the code that is supposed to reject bad input
+#      but very often has a bypass (missing normalization, weak regex,
+#      case-sensitivity bug, protocol confusion).
+#
+#   2. DOM routing sinks — the places where a validated (or "validated")
+#      value actually reaches the browser's navigation machinery. These
+#      are the direct XSS / open-redirect primitives.
+#
+#   3. Network request sinks — the places where a value becomes the
+#      destination of an HTTP request. These are the client-side SSRF
+#      and path-traversal primitives.
+#
+# The shared metavariable-regex restricts every rule to variables whose
+# names suggest they carry user-controllable input. Without this filter
+# the rules match too much to be useful on a real bundle.
+rules:
+  # -----------------------------------------------------------------------
+  # 1. Validation logic
+  # -----------------------------------------------------------------------
+  - id: jslogic-validation-logic
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      [Validation] A routing-shaped variable is used in a check.
+      Manually review for normalization bypass, case-sensitivity bugs,
+      or regex flaws that could be leveraged for SSRF / open redirect.
+    patterns:
+      - pattern-either:
+          - pattern: $VAR.includes(...)
+          - pattern: $VAR.startsWith(...)
+          - pattern: $VAR.endsWith(...)
+          - pattern: $VAR.indexOf(...)
+          - pattern: $VAR.match(...)
+          - pattern: $VAR.search(...)
+          - pattern: $REGEX.test($VAR)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(url|uri|endpoint|path|href|domain|hostname|host|redirect|target|dest|destination|next|return|file|page|src|link|route|query|param|api|input|callback|site).*
+
+  # -----------------------------------------------------------------------
+  # 2. DOM routing sinks
+  # -----------------------------------------------------------------------
+  - id: jslogic-dom-routing-sink
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      [Routing Sink] A user-shaped variable reaches a navigation API.
+      Classic DOM-based XSS (`javascript:`) and open-redirect (`//evil.tld`)
+      primitive. Trace the source and check every upstream validation.
+    patterns:
+      - pattern-either:
+          - pattern: window.location = $VAR
+          - pattern: window.location.href = $VAR
+          - pattern: window.location.assign($VAR)
+          - pattern: window.location.replace($VAR)
+          - pattern: location = $VAR
+          - pattern: location.href = $VAR
+          - pattern: location.assign($VAR)
+          - pattern: location.replace($VAR)
+          - pattern: window.open($VAR, ...)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(url|uri|endpoint|path|href|domain|hostname|host|redirect|target|dest|destination|next|return|file|page|src|link|route|query|param|api|input|callback|site).*
+
+  # -----------------------------------------------------------------------
+  # 3. Network request sinks
+  # -----------------------------------------------------------------------
+  - id: jslogic-network-request-sink
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      [Network Sink] A user-shaped variable is used as an HTTP request
+      destination. Client-side SSRF and path traversal primitive. Check
+      whether the value is constrained to a fixed origin before use.
+    patterns:
+      - pattern-either:
+          - pattern: fetch($VAR, ...)
+          - pattern: window.fetch($VAR, ...)
+          - pattern: axios($VAR, ...)
+          - pattern: axios.get($VAR, ...)
+          - pattern: axios.post($VAR, ...)
+          - pattern: axios.put($VAR, ...)
+          - pattern: axios.delete($VAR, ...)
+          - pattern: $.ajax($VAR, ...)
+          - pattern: $.get($VAR, ...)
+          - pattern: $.post($VAR, ...)
+          - pattern: |
+              $XHR = new XMLHttpRequest();
+              ...
+              $XHR.open(..., $VAR, ...);
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(url|uri|endpoint|path|href|domain|hostname|host|redirect|target|dest|destination|next|return|file|page|src|link|route|query|param|api|input|callback|site).*
